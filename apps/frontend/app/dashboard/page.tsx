@@ -1,181 +1,315 @@
 "use client";
-import React, { useState } from "react";
-import { Plus } from "lucide-react";
-import { WebsiteCard } from "@/components/websiteCard";
-import { CreateWebsiteModal } from "@/components/createWebsiteModal";
+import React, { useState, useMemo } from "react";
+import { ChevronDown, ChevronUp, Globe, Plus, Moon, Sun } from "lucide-react";
 import { useWebsites } from "@/hooks/useWebsites";
 import axios from "axios";
 import { API_BACKEND_URL } from "@/config";
 import { useAuth } from "@clerk/nextjs";
-function aggregateTicks(ticks) {
-  // Group ticks into 3-minute windows
-  const windowMs = 3 * 60 * 1000;
-  const sorted = [...ticks].sort(
-    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
+
+type UptimeStatus = "good" | "bad" | "unknown";
+
+function StatusCircle({ status }: { status: UptimeStatus }) {
+  return (
+    <div
+      className={`w-3 h-3 rounded-full ${
+        status === "good"
+          ? "bg-green-500"
+          : status === "bad"
+            ? "bg-red-500"
+            : "bg-gray-500"
+      }`}
+    />
   );
-  const result = [];
-  let windowStart = null;
-  let windowTicks = [];
-  for (const tick of sorted) {
-    const tickTime = new Date(tick.createdAt).getTime();
-    if (windowStart === null || tickTime >= windowStart + windowMs) {
-      if (windowTicks.length > 0) {
-        // Aggregate: use the latest tick in the window
-        const last = windowTicks[windowTicks.length - 1];
-        result.push({
-          timestamp: new Date(last.createdAt),
-          status: last.status === "up" ? "up" : "down",
-          responseTime: last.latency,
-        });
-      }
-      windowStart = tickTime - (tickTime % windowMs);
-      windowTicks = [];
-    }
-    windowTicks.push(tick);
-  }
-  if (windowTicks.length > 0) {
-    const last = windowTicks[windowTicks.length - 1];
-    result.push({
-      timestamp: new Date(last.createdAt),
-      status: last.status === "up" ? "up" : "down",
-      responseTime: last.latency,
-    });
-  }
-  return result;
 }
 
-const Dashboard: React.FC = () => {
-  const { websites, fetchWebsites } = useWebsites();
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const { getToken } = useAuth();
+function UptimeTicks({ ticks }: { ticks: UptimeStatus[] }) {
+  return (
+    <div className="flex gap-1 mt-2">
+      {ticks.map((tick, index) => (
+        <div
+          key={index}
+          className={`w-8 h-2 rounded ${
+            tick === "good"
+              ? "bg-green-500"
+              : tick === "bad"
+                ? "bg-red-500"
+                : "bg-gray-500"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
 
-  // Adapt websites for WebsiteCard
-  const adaptedWebsites = websites.map((site) => {
-    const ticks = site.ticks || [];
-    const uptimeHistory = aggregateTicks(ticks);
-    const lastTick = ticks[ticks.length - 1];
-    return {
-      id: site.id,
-      name: site.url, // No name in API, fallback to url
-      url: site.url,
-      status: lastTick ? (lastTick.status === "up" ? "up" : "down") : "down",
-      responseTime: lastTick ? lastTick.latency : undefined,
-      lastChecked: lastTick ? new Date(lastTick.createdAt) : new Date(),
-      uptimeHistory,
-    };
-  });
-
-  const upCount = adaptedWebsites.filter((site) => site.status === "up").length;
-  const upPercentage =
-    adaptedWebsites.length > 0
-      ? Math.round((upCount / adaptedWebsites.length) * 100)
-      : 0;
-
-  // handleCreateWebsite would need to POST to API in a real app
+function CreateWebsiteModal({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean;
+  onClose: (url: string | null) => void;
+}) {
+  const [url, setUrl] = useState("");
+  if (!isOpen) return null;
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Add Website Button */}
-        <div className="flex justify-end mb-6">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-semibold mb-4 dark:text-white">
+          Add New Website
+        </h2>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            URL
+          </label>
+          <input
+            type="url"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
+            placeholder="https://example.com"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end space-x-3 mt-6">
           <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all duration-200 hover:scale-105"
+            type="button"
+            onClick={() => onClose(null)}
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md"
           >
-            <Plus className="w-4 h-4" />
-            <span>Add Website</span>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            onClick={() => onClose(url)}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+          >
+            Add Website
           </button>
         </div>
-        {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl border border-gray-800 p-6 hover:bg-gray-900/70 transition-all duration-200">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 bg-blue-600/20 rounded-xl flex items-center justify-center"></div>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">
-                  Total Monitors
-                </p>
-                <p className="text-2xl font-bold text-white">
-                  {adaptedWebsites.length}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl border border-gray-800 p-6 hover:bg-gray-900/70 transition-all duration-200">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 bg-green-600/20 rounded-xl flex items-center justify-center"></div>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">Online</p>
-                <p className="text-2xl font-bold text-green-400">{upCount}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-gray-900/50 backdrop-blur-sm rounded-xl border border-gray-800 p-6 hover:bg-gray-900/70 transition-all duration-200">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 bg-green-600/20 rounded-xl flex items-center justify-center"></div>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">Uptime</p>
-                <p className="text-2xl font-bold text-green-400">
-                  {upPercentage}%
-                </p>
-              </div>
-            </div>
+      </div>
+    </div>
+  );
+}
+
+interface ProcessedWebsite {
+  id: string;
+  url: string;
+  status: UptimeStatus;
+  uptimePercentage: number;
+  lastChecked: string;
+  uptimeTicks: UptimeStatus[];
+}
+
+function WebsiteCard({ website }: { website: ProcessedWebsite }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+      <div
+        className="p-4 cursor-pointer flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center space-x-4">
+          <StatusCircle status={website.status} />
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">
+              {website.url}
+            </h3>
           </div>
         </div>
-        {/* Websites List */}
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-white">
-              Monitored Websites
-            </h2>
-            <div className="text-sm text-gray-400">
-              Click on any website to view detailed uptime history
-            </div>
-          </div>
-          <div className="space-y-4">
-            {adaptedWebsites.map((website) => (
-              <WebsiteCard key={website.id} website={website} />
-            ))}
-          </div>
+        <div className="flex items-center space-x-4">
+          <span className="text-sm text-gray-600 dark:text-gray-300">
+            {website.uptimePercentage.toFixed(1)}% uptime
+          </span>
+          {isExpanded ? (
+            <ChevronUp className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+          )}
         </div>
       </div>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 border-t border-gray-100 dark:border-gray-700">
+          <div className="mt-3">
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">
+              Last 30 minutes status:
+            </p>
+            <UptimeTicks ticks={website.uptimeTicks} />
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+            Last checked: {website.lastChecked}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const { websites, refreshWebsites } = useWebsites();
+  const { getToken } = useAuth();
+
+  const processedWebsites = useMemo(
+    () =>
+      websites.map((website) => {
+        // Sort ticks by creation time
+        const sortedTicks = [...website.ticks].sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        // Get the most recent 30 minutes of ticks
+        const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+        const recentTicks = sortedTicks.filter(
+          (tick) => new Date(tick.createdAt) > thirtyMinutesAgo
+        );
+
+        // Aggregate ticks into 3-minute windows (10 windows total)
+        const windows: UptimeStatus[] = [];
+
+        for (let i = 0; i < 10; i++) {
+          const windowStart = new Date(Date.now() - (i + 1) * 3 * 60 * 1000);
+          const windowEnd = new Date(Date.now() - i * 3 * 60 * 1000);
+
+          const windowTicks = recentTicks.filter((tick) => {
+            const tickTime = new Date(tick.createdAt);
+            return tickTime >= windowStart && tickTime < windowEnd;
+          });
+
+          // Window is considered up if majority of ticks are up
+          const upTicks = windowTicks.filter(
+            (tick) => tick.status === "Good"
+          ).length;
+          windows[9 - i] =
+            windowTicks.length === 0
+              ? "unknown"
+              : upTicks / windowTicks.length >= 0.5
+                ? "good"
+                : "bad";
+        }
+
+        // Calculate overall status and uptime percentage
+        const totalTicks = sortedTicks.length;
+        const upTicks = sortedTicks.filter(
+          (tick) => tick.status === "Good"
+        ).length;
+        const uptimePercentage =
+          totalTicks === 0 ? 100 : (upTicks / totalTicks) * 100;
+
+        // Get the most recent status
+        const currentStatus = windows[windows.length - 1];
+
+        // Format the last checked time
+        const lastChecked = sortedTicks[0]
+          ? new Date(sortedTicks[0].createdAt).toLocaleTimeString()
+          : "Never";
+
+        return {
+          id: website.id,
+          url: website.url,
+          status: currentStatus,
+          uptimePercentage,
+          lastChecked,
+          uptimeTicks: windows,
+        };
+      }),
+    [websites]
+  );
+
+  // Toggle dark mode
+  React.useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [isDarkMode]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
+      <div className="max-w-4xl mx-auto py-8 px-4">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-2">
+            <Globe className="w-8 h-8 text-blue-600" />
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Uptime Monitor
+            </h1>
+          </div>
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"
+            >
+              {isDarkMode ? (
+                <Sun className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              ) : (
+                <Moon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+              )}
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Website</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {processedWebsites.map((website) => (
+            <WebsiteCard key={website.id} website={website} />
+          ))}
+        </div>
+      </div>
+
       <CreateWebsiteModal
-        isOpen={isCreateModalOpen}
+        isOpen={isModalOpen}
         onClose={async (url) => {
-          const token = await getToken();
-          setIsCreateModalOpen(false);
-          axios
-            .post(
+          if (url === null) {
+            setIsModalOpen(false);
+            return;
+          }
+
+          try {
+            const token = await getToken();
+            setIsModalOpen(false);
+
+            // Make the API call with proper headers and error handling
+            await axios.post(
               `${API_BACKEND_URL}/api/v1/website`,
-              {
-                url,
-              },
+              { url },
               {
                 headers: {
-                  Authorization: `Bearer ${token}`,
+                  Authorization: `Bearer ${token}`, // Add Bearer prefix
+                  "Content-Type": "application/json",
                 },
               }
-            )
-            .then((response) => {
-              console.log("Website added:", response.data);
-              fetchWebsites();
-              setIsCreateModalOpen(false);
-              alert("Website added successfully!");
-            })
-            .catch((error) => {
-              console.error("Error adding website:", error);
-            });
+            );
+
+            // Refresh websites list after successful creation
+            await refreshWebsites();
+          } catch (error) {
+            console.error("Error creating website:", error);
+
+            // Handle different types of errors
+            if (axios.isAxiosError(error)) {
+              const errorMessage =
+                error.response?.data?.error || "Failed to create website";
+              alert(`Error: ${errorMessage}`); // Replace with proper toast notification
+            } else {
+              alert("An unexpected error occurred");
+            }
+
+            // You might want to keep the modal open on error
+            // setIsModalOpen(true);
+          }
         }}
-        onSubmit={() => {}}
       />
     </div>
   );
-};
+}
 
-export default Dashboard;
+export default App;

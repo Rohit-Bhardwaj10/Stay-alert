@@ -1,11 +1,21 @@
 import express from "express";
 import cors from "cors";
 import { prisma } from "db/client";
+import { ClerkExpressRequireAuth } from "@clerk/clerk-sdk-node";
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+app.use(
+  cors({
+    origin: ["http://localhost:3000", "http://localhost:3001"], // Your frontend URL
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(express.json());
+
+app.use(ClerkExpressRequireAuth());
 
 app.post("/api/v1/website", async (req, res) => {
   const userId = req.userId!;
